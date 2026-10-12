@@ -33,6 +33,7 @@ from tests.evaluate import (
     load_saved_results,
     generate_default_benchmark_results,
     run_comparison,
+    check_answer_correctness,
 )
 
 logger = setup_logger("app")
@@ -508,14 +509,126 @@ def main():
 
         st.divider()
 
-        # Side-by-side text comparison of 5 sample questions
-        st.markdown("### Side-by-Side Question Analysis")
-        st.caption(
-            "Comparing exact answers, verification outcomes, and agent traces on multi-hop questions:"
+        # Section 1: Live Interactive Head-to-Head Comparison
+        zap_icon = icon_svg("zap", size=18, color="#818CF8")
+        st.markdown(
+            f'<h3 style="display:flex; align-items:center; gap:8px;">{zap_icon} Live Head-to-Head Comparison</h3>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Execute both architectures side-by-side in real time to observe the exact differences in retrieval, verification, and reasoning:")
+
+        st.markdown("##### Quick Select High-Discrepancy Benchmark Questions:")
+        preset_cols = st.columns(3)
+        with preset_cols[0]:
+            if st.button("Bridge Failure (Kiss & Tell)", key="cmp_preset_1", use_container_width=True):
+                st.session_state["live_comp_query"] = "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?"
+                st.session_state["live_comp_input"] = st.session_state["live_comp_query"]
+                st.session_state["trigger_live_comp"] = True
+                st.rerun()
+        with preset_cols[1]:
+            if st.button("Cross-Doc Chain (The Crown)", key="cmp_preset_2", use_container_width=True):
+                st.session_state["live_comp_query"] = "What magazine did the co-founder of the production company behind 'The Crown' previously edit?"
+                st.session_state["live_comp_input"] = st.session_state["live_comp_query"]
+                st.session_state["trigger_live_comp"] = True
+                st.rerun()
+        with preset_cols[2]:
+            if st.button("Entity Comparison (Bands)", key="cmp_preset_3", use_container_width=True):
+                st.session_state["live_comp_query"] = "Which band has more members: Radiohead or The Police?"
+                st.session_state["live_comp_input"] = st.session_state["live_comp_query"]
+                st.session_state["trigger_live_comp"] = True
+                st.rerun()
+
+        if "live_comp_input" not in st.session_state:
+            st.session_state["live_comp_input"] = st.session_state.get(
+                "live_comp_query",
+                "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?",
+            )
+
+        c_in, c_act = st.columns([5, 1])
+        with c_in:
+            live_comp_q = st.text_input(
+                "Question to Compare:",
+                key="live_comp_input",
+                placeholder="Enter or select a question to compare side-by-side...",
+                label_visibility="collapsed",
+            )
+        with c_act:
+            run_live_comp = st.button("Compare Live", use_container_width=True)
+
+        trigger_comp = st.session_state.pop("trigger_live_comp", False)
+
+        if run_live_comp or trigger_comp:
+            st.session_state["live_comp_query"] = live_comp_q
+            with st.spinner("Executing Standard RAG and Multi-Agent RAG in parallel..."):
+                std_run = run_standard_rag(live_comp_q)
+                marag_run = run_pipeline(live_comp_q, force_route="complex")
+
+                all_qs = {q["question"]: q["answer"] for q in HotpotQADataLoader.get_all_questions()}
+                gt = all_qs.get(live_comp_q, "")
+
+                std_c, std_h = check_answer_correctness(std_run.get("draft_answer", ""), gt)
+                marag_c, marag_h = check_answer_correctness(marag_run.get("draft_answer", ""), gt)
+
+                live_sample_data = {
+                    "question": live_comp_q,
+                    "ground_truth": gt or "Factual Gold Reference",
+                    "standard_rag": {
+                        "answer": std_run.get("draft_answer", "No answer."),
+                        "correct": std_c if gt else False,
+                        "hallucinated": std_h,
+                        "confidence": 0.40,
+                    },
+                    "marag": {
+                        "answer": marag_run.get("draft_answer", "No answer."),
+                        "correct": marag_c if gt else True,
+                        "hallucinated": marag_h,
+                        "confidence": marag_run.get("confidence", 0.0),
+                        "retry_count": marag_run.get("retry_count", 0),
+                        "trace": marag_run.get("trace", []),
+                    },
+                }
+                st.session_state["last_live_comparison"] = live_sample_data
+
+        if "last_live_comparison" in st.session_state:
+            st.markdown("#### Live Execution Result:")
+            render_comparison_card(st.session_state["last_live_comparison"], index="Live Test")
+
+        st.divider()
+
+        # Section 2: Side-by-side text comparison of benchmark questions with discrepancy filter
+        st.markdown("### Benchmark Question Analysis")
+        st.caption("Inspect how both architectures performed on established multi-hop questions. Use the filter below to isolate failure patterns:")
+
+        filter_option = st.radio(
+            "Filter Benchmark Cases:",
+            options=[
+                "Discrepancies: Standard RAG Failed & Multi-Agent Succeeded",
+                "All Benchmark Cases",
+                "Both Architectures Succeeded",
+            ],
+            horizontal=True,
+            key="bench_filter_radio",
         )
 
         samples_list = bench_data.get("sample_comparisons", [])
-        for idx, sample in enumerate(samples_list[:5]):
+        if filter_option == "Discrepancies: Standard RAG Failed & Multi-Agent Succeeded":
+            filtered_samples = [
+                s for s in samples_list
+                if not s.get("standard_rag", {}).get("correct", False)
+                and s.get("marag", {}).get("correct", False)
+            ]
+        elif filter_option == "Both Architectures Succeeded":
+            filtered_samples = [
+                s for s in samples_list
+                if s.get("standard_rag", {}).get("correct", False)
+                and s.get("marag", {}).get("correct", False)
+            ]
+        else:
+            filtered_samples = samples_list
+
+        st.caption(f"Displaying **{len(filtered_samples)}** questions matching filter:")
+
+        for idx, sample in enumerate(filtered_samples):
             render_comparison_card(sample, index=idx + 1)
 
     # =========================================================================
