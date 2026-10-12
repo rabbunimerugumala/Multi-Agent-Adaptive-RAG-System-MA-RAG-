@@ -1,0 +1,18 @@
+# Multi-Agent Adaptive RAG System (MA-RAG) Dependencies
+# Python 3.11+
+streamlit>=1.35.0
+langgraph>=0.2.0
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+datasets>=2.19.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+requests>=2.31.0
+altair>=5.0.0
+pandas>=2.0.0
+numpy>=1.26.0
+tqdm>=4.66.0
+pytest>=8.0.0
